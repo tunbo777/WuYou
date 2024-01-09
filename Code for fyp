@@ -1,0 +1,895 @@
+library(bimba)
+library(caret)
+library(rpart)
+library(class)
+library(FNN)
+library(nproc)
+library(MASS)
+library(tcltk)
+
+
+#OSS
+FNR_each_fold_nponly100<-c()
+FPR_each_fold_nponly100<-c()
+FNR_each_fold_np100<-c()
+FPR_each_fold_np100<-c()
+FNR_each_fold_normal100<-c()
+FPR_each_fold_normal100<-c()
+time_100<-c()
+
+pb <- tkProgressBar("进度","已完成 %", 0, 100) 
+
+for(t in 1:100){
+  start_time <- Sys.time()
+
+#K折
+set.seed(123)
+k <- 10
+FNR_each_fold_normal <- c()
+FNR_each_fold_np <- c()
+FNR_each_fold_nponly <- c()
+
+FPR_each_fold_normal<- c()
+FPR_each_fold_np <- c()
+FPR_each_fold_nponly <- c()
+
+#预处理，分训练测试
+Data<-read.csv(file="diabetes.csv",header=TRUE)
+missing1<-which(Data$smoking_history=="No Info")
+Data<-Data[-missing1,]
+missing2<-which(Data$gender=="Other")
+Data<-Data[-missing2,]
+Data <- Data[!(Data$age != floor(Data$age)), ]
+Data$smoking_history<-as.numeric(Data$smoking_history)
+Data$gender<-as.numeric(Data$gender)
+Data$age<-as.numeric(Data$age)
+Data$class<-as.factor(Data$class)
+
+index<-floor(nrow(Data)*0.7)
+Train <- Data[1:index, ]
+Test <- Data[(index+1):nrow(Data),]
+Test1<-Test[-ncol(Test)]
+Test_np <- Test
+Test_np$class <- ifelse(Test_np$class == "Majority", 1, 0)
+Test_np$class <- as.numeric(Test_np$class)
+Test_np1<-Test_np[-ncol(Test_np)]
+
+
+for(i in 1:k){
+
+  #under-sampling
+  Data_undersampling<-OSS(Train)
+
+  #只进行下采样的lda分类器
+  model_onlyun <- lda(class ~ ., data = Data_undersampling)
+  predictions_onlyun<-predict(model_onlyun, Test1, type = "class")
+  confusionMatrix(as.factor(predictions_onlyun$class), as.factor(Test$class))
+  conf_matrix <- confusionMatrix(as.factor(predictions_onlyun$class), as.factor(Test$class))
+  FNR_onlyun <- (conf_matrix$table[2, 1])/(conf_matrix$table[2, 1]+conf_matrix$table[1,1])
+  FNR_each_fold_normal[i] <- FNR_onlyun
+  FNR_each_fold_normal100[t]<-mean(FNR_each_fold_normal)
+
+  FPR_onlyun<- (conf_matrix$table[1, 2])/(conf_matrix$table[1, 2]+conf_matrix$table[2,2])
+  FPR_each_fold_normal[i] <- FPR_onlyun
+  FPR_each_fold_normal100[t]<-mean(FPR_each_fold_normal)
+
+  #进行下采样+np的lda分类器
+  Data_undersampling_np <- Data_undersampling
+  Data_undersampling_np$class <- ifelse(Data_undersampling_np$class == "Majority", 1, 0)
+  Data_undersampling_np$class <- as.numeric(Data_undersampling_np$class)
+
+  matrix_undata<-as.matrix(Data_undersampling_np)
+
+  np_model<-npc(x=matrix_undata[,-9],y=matrix_undata[,9],method="lda")
+  predictions_np<-predict(np_model,Test1,type = "class")
+
+  conf_matrix_np <- confusionMatrix(as.factor(predictions_np$pred.label), as.factor(Test_np$class))
+  FNR_np <- (conf_matrix_np$table[2, 1])/(conf_matrix_np$table[2, 1]+conf_matrix_np$table[1,1])
+  FNR_each_fold_np[i] <- FNR_np
+  FNR_each_fold_np100[t]<-mean(FNR_each_fold_np)
+
+  FPR_np<- (conf_matrix_np$table[1, 2])/(conf_matrix_np$table[1, 2]+conf_matrix_np$table[2,2])
+  FPR_each_fold_np[i] <- FPR_np
+  FPR_each_fold_np100[t]<-mean(FPR_each_fold_np)
+
+  #只进行np的lda分类器
+  Train0<-Train
+  Train0$class <- ifelse(Train0$class == "Majority", 1, 0)
+  Train0$class <- as.numeric(Train0$class)
+  matrix_train<-as.matrix(Train0)
+
+  model_onlynp <- npc(x=matrix_train[,-9],y=matrix_train[,9],method="lda")
+  predictions_onlynp<-predict(model_onlynp,Test1,type = "class")
+
+  conf_matrix_onlynp <- confusionMatrix(as.factor(predictions_onlynp$pred.label), as.factor(Test_np$class))
+  FNR_onlynp <- (conf_matrix_onlynp$table[2, 1])/(conf_matrix_onlynp$table[2, 1]+conf_matrix_onlynp$table[1,1])
+  FNR_each_fold_nponly[i] <- FNR_onlynp
+  FNR_each_fold_nponly100[t]<-mean(FNR_each_fold_nponly)
+
+  FPR_onlynp <- (conf_matrix_onlynp$table[1, 2])/(conf_matrix_onlynp$table[1, 2]+conf_matrix_onlynp$table[2,2])
+  FPR_each_fold_nponly[i] <- FPR_onlynp
+  FPR_each_fold_nponly100[t]<-mean(FPR_each_fold_nponly)
+}
+end_time <- Sys.time()
+time<-end_time-start_time
+time_100[t]<-time
+
+info <- sprintf("已完成 %d%%", round(t*100/100))  ## 设置进度条的完成度
+setTkProgressBar(pb, t*100/100, sprintf("进度 (%s)", info),info)  ## 设置进度条
+}
+
+close(pb)
+
+returnlist<-list(FPR_each_fold_nponly100,FNR_each_fold_nponly100,FPR_each_fold_np100,FNR_each_fold_np100,FPR_each_fold_normal100,FNR_each_fold_normal100)
+save(returnlist,file="OSS.RData")
+
+#NCL
+FNR_each_fold_nponly100<-c()
+FPR_each_fold_nponly100<-c()
+FNR_each_fold_np100<-c()
+FPR_each_fold_np100<-c()
+FNR_each_fold_normal100<-c()
+FPR_each_fold_normal100<-c()
+F_measure_onlynp<-c()
+F_measure_np<-c()
+F_measure_normal<-c()
+time_100<-c()
+
+pb <- tkProgressBar("进度","已完成 %", 0, 100) 
+
+for(t in 1:100){
+  start_time <- Sys.time()
+  
+  #K折
+  set.seed(123)
+  k <- 2
+  FNR_each_fold_normal <- c()
+  FNR_each_fold_np <- c()
+  FNR_each_fold_nponly <- c()
+  
+  FPR_each_fold_normal<- c()
+  FPR_each_fold_np <- c()
+  FPR_each_fold_nponly <- c()
+  
+  #预处理，分训练测试
+  Data<-read.csv(file="diabetes.csv",header=TRUE)
+  missing1<-which(Data$smoking_history=="No Info")
+  Data<-Data[-missing1,]
+  missing2<-which(Data$gender=="Other")
+  Data<-Data[-missing2,]
+  Data <- Data[!(Data$age != floor(Data$age)), ]
+  Data$smoking_history<-as.numeric(Data$smoking_history)
+  Data$gender<-as.numeric(Data$gender)
+  Data$age<-as.numeric(Data$age)
+  Data$class<-as.factor(Data$class)
+  
+  index<-floor(nrow(Data)*0.7)
+  Train <- Data[1:index, ]
+  Test <- Data[(index+1):nrow(Data),]
+  Test1<-Test[-ncol(Test)]
+  Test_np <- Test
+  Test_np$class <- ifelse(Test_np$class == "Majority", 1, 0)
+  Test_np$class <- as.numeric(Test_np$class)
+  Test_np1<-Test_np[-ncol(Test_np)]
+  
+  
+  for(i in 1:k){
+    
+    #under-sampling
+    Data_undersampling<-SBC(Train)
+    
+    只进行下采样的lda分类器
+      model_onlyun <- lda(class ~ ., data = Data_undersampling)
+      predictions_onlyun<-predict(model_onlyun, Test1, type = "class")
+      confusionMatrix(as.factor(predictions_onlyun$class), as.factor(Test$class))
+      conf_matrix <- confusionMatrix(as.factor(predictions_onlyun$class), as.factor(Test$class))
+      FNR_onlyun <- (conf_matrix$table[2, 1])/(conf_matrix$table[2, 1]+conf_matrix$table[1,1])
+      FNR_each_fold_normal[i] <- FNR_onlyun
+      FNR_each_fold_normal100[t]<-mean(FNR_each_fold_normal)
+    
+      FPR_onlyun<- (conf_matrix$table[1, 2])/(conf_matrix$table[1, 2]+conf_matrix$table[2,2])
+      FPR_each_fold_normal[i] <- FPR_onlyun
+      FPR_each_fold_normal100[t]<-mean(FPR_each_fold_normal)
+    
+    #进行下采样+np的lda分类器
+    Data_undersampling_np <- Data_undersampling
+    Data_undersampling_np$class <- ifelse(Data_undersampling_np$class == "Majority", 1, 0)
+    Data_undersampling_np$class <- as.numeric(Data_undersampling_np$class)
+    
+    matrix_undata<-as.matrix(Data_undersampling_np)
+    
+    np_model<-npc(x=matrix_undata[,-9],y=matrix_undata[,9],method="lda")
+    predictions_np<-predict(np_model,Test1,type = "class")
+    
+    conf_matrix_np <- confusionMatrix(as.factor(predictions_np$pred.label), as.factor(Test_np$class))
+    
+    conf_matrix_np <- confusionMatrix(as.factor(predictions_np$pred.label), as.factor(Test_np$class))
+    true_positives_np <- conf_matrix_np$table[2, 2] # 真正例 (TP)
+    false_positives_np <- conf_matrix_np$table[1, 2] # 假正例 (FP)
+    false_negatives_np <- conf_matrix_np$table[2, 1] # 假负例 (FN)
+    precision_np <- true_positives_np / (true_positives_np + false_positives_np)
+    recall_np <- true_positives_np / (true_positives_np + false_negatives_np)
+    f1_score_np <- 2 * (precision_np * recall_np) / (precision_np + recall_np)
+    F_measure_np[t]<-f1_score_np
+    
+    
+    FNR_np <- (conf_matrix_np$table[2, 1])/(conf_matrix_np$table[2, 1]+conf_matrix_np$table[1,1])
+    FNR_each_fold_np[i] <- FNR_np
+    FNR_each_fold_np100[t]<-mean(FNR_each_fold_np)
+    
+    FPR_np<- (conf_matrix_np$table[1, 2])/(conf_matrix_np$table[1, 2]+conf_matrix_np$table[2,2])
+    FPR_each_fold_np[i] <- FPR_np
+    FPR_each_fold_np100[t]<-mean(FPR_each_fold_np)
+    
+    #只进行np的lda分类器
+      Train0<-Train
+      Train0$class <- ifelse(Train0$class == "Majority", 1, 0)
+      Train0$class <- as.numeric(Train0$class)
+      matrix_train<-as.matrix(Train0)
+    
+      model_onlynp <- npc(x=matrix_train[,-9],y=matrix_train[,9],method="lda")
+      predictions_onlynp<-predict(model_onlynp,Test1,type = "class")
+    
+      conf_matrix_onlynp <- confusionMatrix(as.factor(predictions_onlynp$pred.label), as.factor(Test_np$class))
+      FNR_onlynp <- (conf_matrix_onlynp$table[2, 1])/(conf_matrix_onlynp$table[2, 1]+conf_matrix_onlynp$table[1,1])
+      FNR_each_fold_nponly[i] <- FNR_onlynp
+      FNR_each_fold_nponly100[t]<-mean(FNR_each_fold_nponly)
+    
+      FPR_onlynp <- (conf_matrix_onlynp$table[1, 2])/(conf_matrix_onlynp$table[1, 2]+conf_matrix_onlynp$table[2,2])
+      FPR_each_fold_nponly[i] <- FPR_onlynp
+      FPR_each_fold_nponly100[t]<-mean(FPR_each_fold_nponly)
+  }
+  end_time <- Sys.time()
+  time<-end_time-start_time
+  time_100[t]<-time
+  
+  info <- sprintf("已完成 %d%%", round(t*100/100))  ## 设置进度条的完成度
+  setTkProgressBar(pb, t*100/100, sprintf("进度 (%s)", info),info)  ## 设置进度条
+}
+
+close(pb)
+
+returnlist<-list(FPR_each_fold_nponly100,FNR_each_fold_nponly100,FPR_each_fold_np100,FNR_each_fold_np100,FPR_each_fold_normal100,FNR_each_fold_normal100)
+
+
+
+#CUS
+
+FNR_each_fold_nponly100<-c()
+FPR_each_fold_nponly100<-c()
+FNR_each_fold_np100<-c()
+FPR_each_fold_np100<-c()
+FNR_each_fold_normal100<-c()
+FPR_each_fold_normal100<-c()
+time_100<-c()
+
+pb <- tkProgressBar("进度","已完成 %", 0, 100) 
+
+for(t in 1:100){
+  start_time <- Sys.time()
+
+#K折
+set.seed(123)
+k <- 10
+FNR_each_fold_normal <- c()
+FNR_each_fold_np <- c()
+FNR_each_fold_nponly <- c()
+
+FPR_each_fold_normal<- c()
+FPR_each_fold_np <- c()
+FPR_each_fold_nponly <- c()
+
+
+
+#预处理，分训练测试
+Data<-read.csv(file="diabetes.csv",header=TRUE)
+missing1<-which(Data$smoking_history=="No Info")
+Data<-Data[-missing1,]
+missing2<-which(Data$gender=="Other")
+Data<-Data[-missing2,]
+Data <- Data[!(Data$age != floor(Data$age)), ]
+Data$smoking_history<-as.numeric(Data$smoking_history)
+Data$gender<-as.numeric(Data$gender)
+Data$age<-as.numeric(Data$age)
+Data$class<-as.factor(Data$class)
+
+index<-floor(nrow(Data)*0.7)
+Train <- Data[1:index, ]
+Test <- Data[(index+1):nrow(Data),]
+Test1<-Test[-ncol(Test)]
+Test_np <- Test
+Test_np$class <- ifelse(Test_np$class == "Majority", 1, 0)
+Test_np$class <- as.numeric(Test_np$class)
+Test_np1<-Test_np[-ncol(Test_np)]
+
+
+for(i in 1:k){
+  
+  #under-sampling
+  Data_undersampling<-SBC(Train)
+  
+  #只进行下采样的lda分类器
+  model_onlyun <- lda(class ~ ., data = Data_undersampling)
+  predictions_onlyun<-predict(model_onlyun, Test1, type = "class")
+  confusionMatrix(as.factor(predictions_onlyun$class), as.factor(Test$class))
+  conf_matrix <- confusionMatrix(as.factor(predictions_onlyun$class), as.factor(Test$class))
+  FNR_onlyun <- (conf_matrix$table[2, 1])/(conf_matrix$table[2, 1]+conf_matrix$table[1,1])
+  FNR_each_fold_normal[i] <- FNR_onlyun
+  FNR_each_fold_normal100[t]<-mean(FNR_each_fold_normal)
+  
+  FPR_onlyun<- (conf_matrix$table[1, 2])/(conf_matrix$table[1, 2]+conf_matrix$table[2,2])
+  FPR_each_fold_normal[i] <- FPR_onlyun
+  FPR_each_fold_normal100[t]<-mean(FPR_each_fold_normal)
+  
+  #进行下采样+np的lda分类器
+  Data_undersampling_np <- Data_undersampling
+  Data_undersampling_np$class <- ifelse(Data_undersampling_np$class == "Majority", 1, 0)
+  Data_undersampling_np$class <- as.numeric(Data_undersampling_np$class)
+  
+  matrix_undata<-as.matrix(Data_undersampling_np)
+  
+  np_model<-npc(x=matrix_undata[,-9],y=matrix_undata[,9],method="lda")
+  predictions_np<-predict(np_model,Test1,type = "class")
+  
+  conf_matrix_np <- confusionMatrix(as.factor(predictions_np$pred.label), as.factor(Test_np$class))
+  FNR_np <- (conf_matrix_np$table[2, 1])/(conf_matrix_np$table[2, 1]+conf_matrix_np$table[1,1])
+  FNR_each_fold_np[i] <- FNR_np
+  FNR_each_fold_np100[t]<-mean(FNR_each_fold_np)
+  
+  FPR_np<- (conf_matrix_np$table[1, 2])/(conf_matrix_np$table[1, 2]+conf_matrix_np$table[2,2])
+  FPR_each_fold_np[i] <- FPR_np
+  FPR_each_fold_np100[t]<-mean(FPR_each_fold_np)
+  
+  #只进行np的lda分类器
+  Train0<-Train
+  Train0$class <- ifelse(Train0$class == "Majority", 1, 0)
+  Train0$class <- as.numeric(Train0$class)
+  matrix_train<-as.matrix(Train0)
+  
+  model_onlynp <- npc(x=matrix_train[,-9],y=matrix_train[,9],method="lda")
+  predictions_onlynp<-predict(model_onlynp,Test1,type = "class")
+  
+  conf_matrix_onlynp <- confusionMatrix(as.factor(predictions_onlynp$pred.label), as.factor(Test_np$class))
+  FNR_onlynp <- (conf_matrix_onlynp$table[2, 1])/(conf_matrix_onlynp$table[2, 1]+conf_matrix_onlynp$table[1,1])
+  FNR_each_fold_nponly[i] <- FNR_onlynp
+  FNR_each_fold_nponly100[t]<-mean(FNR_each_fold_nponly)
+  
+  FPR_onlynp <- (conf_matrix_onlynp$table[1, 2])/(conf_matrix_onlynp$table[1, 2]+conf_matrix_onlynp$table[2,2])
+  FPR_each_fold_nponly[i] <- FPR_onlynp
+  FPR_each_fold_nponly100[t]<-mean(FPR_each_fold_nponly)
+}
+
+end_time <- Sys.time()
+time<-end_time-start_time
+time_100[t]<-time
+
+info <- sprintf("已完成 %d%%", round(t*100/100))  ## 设置进度条的完成度
+setTkProgressBar(pb, t*100/100, sprintf("进度 (%s)", info),info)  ## 设置进度条
+}
+
+close(pb)
+
+returnlist<-list(FPR_each_fold_nponly100,FNR_each_fold_nponly100,FPR_each_fold_np100,FNR_each_fold_np100,FPR_each_fold_normal100,FNR_each_fold_normal100)
+save(returnlist,file="SBC.RData")
+#CUSBOOST
+
+CUSBoost <- function(D, k) {
+  weights <- rep(1 / nrow(D), nrow(D))
+  models <- list()
+  errors <- numeric(k)
+  
+  for (i in 1:k) {
+    Di <- OSS(D)  
+    Mi <- lda(class ~ ., data = Di)
+    pred <- predict(Mi, D)$class
+    error <- sum(weights * (pred != D$class)) / sum(weights)
+    
+    if (error >= 0.5) next
+    
+    correctly_classified <- pred == D$class
+    weights[correctly_classified] <- weights[correctly_classified] * (1 - error) / error
+    weights <- weights / sum(weights)
+    
+    models[[i]] <- Mi
+    errors[i] <- error
+  }
+  return(list(models = models, errors = errors))
+}
+
+
+CUSBoost_predict <- function(model_list, new_instance) {
+  models <- model_list$models
+  errors <- model_list$errors
+  n_samples <- nrow(new_instance)
+  n_classes <- length(unique(new_instance$class))
+  class_weights <- matrix(0, nrow = n_samples, ncol = n_classes)
+  colnames(class_weights) <- levels(new_instance$class)
+  
+  for (i in 1:length(models)) {
+    if (errors[i] < 0.5) {
+      pred <- predict(models[[i]], new_instance)$class
+      if (is.null(pred)) {
+        stop(paste("Model", i, "failed to return valid predictions."))
+      }
+      pred_indices <- match(pred, levels(new_instance$class))
+      for (j in seq_along(pred_indices)) {
+        class_weights[j, pred_indices[j]] <- class_weights[j, pred_indices[j]] + log((1 - errors[i]) / errors[i])
+      }
+    }
+  }
+  final_predictions <- colnames(class_weights)[max.col(class_weights, ties.method = "first")]
+  return(final_predictions)
+}
+
+#  ---- 定义NP的CUSBoost&CUSPrediction函数 ----
+
+CUSBoost_np <- function(D, k) {
+  
+  weights <- rep(1 / nrow(D), nrow(D))
+  models <- list()
+  errors <- numeric(k)
+  
+  for (i in 1:k) {
+    
+    Di <- SBC(D)  # 确保SBC返回一个带有class列的平衡数据集
+    Di$class <- ifelse(Di$class == "Majority", 1, 0)
+    matrix_D<-as.matrix(Di)
+    Mi <- npc(x=matrix_D[,-9],y=matrix_D[,9],method="lda")
+    pred <- predict(Mi, D[,-9])$pred.label
+    error <- sum(weights * (pred != Train_np$class)) / sum(weights)
+    
+    
+    if (error >= 0.5) next
+    
+    correctly_classified <- pred == Train_np$class
+    weights[correctly_classified] <- weights[correctly_classified] * (1 - error) / error
+    weights <- weights / sum(weights)
+    
+    models[[i]] <- Mi
+    errors[i] <- error
+  }
+  return(list(models = models, errors = errors))
+}
+
+CUSBoost_predict_np <- function(model_list, new_instance) {#要用没删类别的
+  models <- model_list$models
+  errors <- model_list$errors
+  new_instance$class <- factor(new_instance$class)
+  n_samples <- nrow(new_instance)
+  n_classes <- length(unique(new_instance$class))
+  class_weights <- matrix(0, nrow = n_samples, ncol = n_classes)
+  colnames(class_weights) <- levels(new_instance$class)
+  
+  for (i in 1:length(models)) {
+    if (errors[i] < 0.5) {
+      pred <- predict(models[[i]], new_instance[,-9])$pred.label
+      if (is.null(pred)) {
+        stop(paste("Model", i, "failed to return valid predictions."))
+      }
+      pred_indices <- match(pred, levels(new_instance$class))
+      for (j in seq_along(pred_indices)) {
+        class_weights[j, pred_indices[j]] <- class_weights[j, pred_indices[j]] + log((1 - errors[i]) / errors[i])
+      }
+    }
+  }
+  final_predictions <- colnames(class_weights)[max.col(class_weights, ties.method = "first")]
+  return(final_predictions)
+}
+
+
+FNR_each_fold_nponly100<-c()
+FPR_each_fold_nponly100<-c()
+FNR_each_fold_np100<-c()
+FPR_each_fold_np100<-c()
+FNR_each_fold_normal100<-c()
+FPR_each_fold_normal100<-c()
+time_100<-c()
+
+pb <- tkProgressBar("进度","已完成 %", 0, 100) 
+
+for(u in 1:100){
+  start_time <- Sys.time()
+
+# ---- 预处理，分训练测试 ----
+Data<-read.csv(file="diabetes.csv",header=TRUE)
+missing1<-which(Data$smoking_history=="No Info")
+Data<-Data[-missing1,]
+missing2<-which(Data$gender=="Other")
+Data<-Data[-missing2,]
+Data <- Data[!(Data$age != floor(Data$age)), ]
+Data$smoking_history<-as.numeric(Data$smoking_history)
+Data$gender<-as.numeric(Data$gender)
+Data$age<-as.numeric(Data$age)
+Data$class<-as.factor(Data$class)
+
+index<-floor(nrow(Data)*0.7)
+Train <- Data[1:index, ]
+Test <- Data[(index+1):nrow(Data),]
+Test1<-Test[-ncol(Test)]
+Test_np <- Test
+Test_np$class <- ifelse(Test_np$class == "Majority", 1, 0)
+Test_np$class <- as.numeric(Test_np$class)
+Test_npm<-as.matrix(Test_np)
+Test_np1<-Test_np[-ncol(Test_np)]
+Train_np<-Train
+Train_np$class <- ifelse(Train_np$class == "Majority", 1, 0)
+Train_np$class <- as.numeric(Train_np$class)
+
+
+
+
+#  ---- t折 ----
+
+t<-10
+
+FNR_each_fold_onlyun <- c() #只用下采样
+FNR_each_fold_np <- c() #np+下采样
+FNR_each_fold_nponly <- c()#只用np
+
+FPR_each_fold_onlyun <- c()
+FPR_each_fold_np <- c()
+FPR_each_fold_nponly <- c()
+
+F_measure_onlynp<-c()
+F_measure_np<-c()
+F_measure_normal<-c()
+time_100<-c()
+
+
+for(q in 1:t){
+  
+  #只进行下采样的lda分类器
+  Model_CUSB <- CUSBoost(Train, 10) #这里把k占了
+  predictions_CUSB <- CUSBoost_predict(Model_CUSB, Test)#只能用Test
+  conf_matrix_CUSB <-confusionMatrix(as.factor(predictions_CUSB), as.factor(Test$class))
+  FNR_CUS <- (conf_matrix_CUSB$table[2, 1])/(conf_matrix_CUSB$table[2, 1]+conf_matrix_CUSB$table[1,1])
+  FNR_each_fold_onlyun[q] <- FNR_CUS
+  FNR_each_fold_normal100[u]<-mean(FNR_each_fold_onlyun)
+
+  FPR_onlyun<- (conf_matrix_CUSB$table[1, 2])/(conf_matrix_CUSB$table[1, 2]+conf_matrix_CUSB$table[2,2])
+  FPR_each_fold_onlyun[q] <- FPR_onlyun
+  FPR_each_fold_normal100[u]<-mean(FPR_each_fold_onlyun)
+
+  #进行下采样+np的lda分类器
+  np_model<-CUSBoost_np(Train,10)#这里把k占了
+  np_predictions <- CUSBoost_predict_np(np_model, Test_np)
+  #np_predictions <- ifelse(np_predictions == "1", "Majority", "Minority")
+  
+  conf_matrix_np <- confusionMatrix(as.factor(np_predictions), as.factor(Test_np$class))
+  true_positives_np <- conf_matrix_np$table[2, 2] # 真正例 (TP)
+  false_positives_np <- conf_matrix_np$table[1, 2] # 假正例 (FP)
+  false_negatives_np <- conf_matrix_np$table[2, 1] # 假负例 (FN)
+  precision_np <- true_positives_np / (true_positives_np + false_positives_np)
+  recall_np <- true_positives_np / (true_positives_np + false_negatives_np)
+  f1_score_np <- 2 * (precision_np * recall_np) / (precision_np + recall_np)
+  F_measure_np[t]<-f1_score_np
+  
+
+  FNR_np <- (conf_matrix_np$table[2, 1])/(conf_matrix_np$table[2, 1]+conf_matrix_np$table[1,1])
+  FNR_each_fold_np[q] <- FNR_np
+  FNR_each_fold_np100[u]<-mean(FNR_each_fold_np)
+
+  FPR_np<- (conf_matrix_np$table[1, 2])/(conf_matrix_np$table[1, 2]+conf_matrix_np$table[2,2])
+  FPR_each_fold_np[q] <- FPR_np
+  FPR_each_fold_np100[u]<-mean(FPR_each_fold_np)
+  
+
+  #只进行np的lda分类器
+  Train0<-Train
+  Train0$class <- ifelse(Train0$class == "Majority", 1, 0)
+  Train0$class <- as.numeric(Train0$class)
+  matrix_train<-as.matrix(Train0)
+
+  model_onlynp <- npc(x=matrix_train[,-9],y=matrix_train[,9],method="lda")
+  predictions_onlynp<-predict(model_onlynp,Test1,type = "class")
+
+  conf_matrix_onlynp <- confusionMatrix(as.factor(predictions_onlynp$pred.label), as.factor(Test_np$class))
+  FNR_onlynp <- (conf_matrix_onlynp$table[2, 1])/(conf_matrix_onlynp$table[2, 1]+conf_matrix_onlynp$table[1,1])
+  FNR_each_fold_nponly[q] <- FNR_onlynp
+  FNR_each_fold_nponly100[u]<-mean(FNR_each_fold_nponly)
+
+  FPR_onlynp <- (conf_matrix_onlynp$table[1, 2])/(conf_matrix_onlynp$table[1, 2]+conf_matrix_onlynp$table[2,2])
+  FPR_each_fold_nponly[q] <- FPR_onlynp
+  FPR_each_fold_nponly100[u]<-mean(FPR_each_fold_nponly)
+}
+end_time <- Sys.time()
+time<-end_time-start_time
+time_100[u]<-time
+
+info <- sprintf("已完成 %d%%", round(u*100/100))  ## 设置进度条的完成度
+setTkProgressBar(pb, u*100/100, sprintf("进度 (%s)", info),info)  ## 设置进度条
+}
+
+close(pb)
+
+conf_matrix_CUSB <-confusionMatrix(as.factor(predictions_CUSB), as.factor(Test$class))
+true_positives_CUSB <- conf_matrix_CUSB$table[2, 2] # 真正例 (TP)
+false_positives_CUSB <- conf_matrix_CUSB$table[1, 2] # 假正例 (FP)
+false_negatives_CUSB <- conf_matrix_CUSB$table[2, 1] # 假负例 (FN)
+precision_CUSB <- true_positives_CUSB / (true_positives_CUSB + false_positives_CUSB)
+recall_CUSB <- true_positives_CUSB / (true_positives_CUSB + false_negatives_CUSB)
+f1_score_CUSB <- 2 * (precision_CUSB * recall_CUSB) / (precision_CUSB + recall_CUSB)
+F_measure_np[t]<-f1_score_np
+
+
+#RUSBOOST
+
+#RUSBoost
+
+library(bimba)
+library(caret)
+library(rpart)
+library(class)
+library(FNN)
+library(nproc)
+library(MASS)
+
+#  ---- 定义RUSBoost&RUSPrediction函数 ----
+
+RUSBoost <- function(D, k) {
+  weights <- rep(1 / nrow(D), nrow(D))
+  models <- list()
+  errors <- numeric(k)
+  
+  for (i in 1:k) {
+    Di <- RUS(D)  
+    Mi <- lda(class ~ ., data = Di)
+    pred <- predict(Mi, D)$class
+    error <- sum(weights * (pred != D$class)) / sum(weights)
+    
+    if (error >= 0.5) next
+    
+    correctly_classified <- pred == D$class
+    weights[correctly_classified] <- weights[correctly_classified] * (1 - error) / error
+    weights <- weights / sum(weights)
+    
+    models[[i]] <- Mi
+    errors[i] <- error
+  }
+  return(list(models = models, errors = errors))
+}
+
+
+RUSBoost_predict <- function(model_list, new_instance) {
+  models <- model_list$models
+  errors <- model_list$errors
+  n_samples <- nrow(new_instance)
+  n_classes <- length(unique(new_instance$class))
+  class_weights <- matrix(0, nrow = n_samples, ncol = n_classes)
+  colnames(class_weights) <- levels(new_instance$class)
+  
+  for (i in 1:length(models)) {
+    if (errors[i] < 0.5) {
+      pred <- predict(models[[i]], new_instance)$class
+      if (is.null(pred)) {
+        stop(paste("Model", i, "failed to return valid predictions."))
+      }
+      pred_indices <- match(pred, levels(new_instance$class))
+      for (j in seq_along(pred_indices)) {
+        class_weights[j, pred_indices[j]] <- class_weights[j, pred_indices[j]] + log((1 - errors[i]) / errors[i])
+      }
+    }
+  }
+  final_predictions <- colnames(class_weights)[max.col(class_weights, ties.method = "first")]
+  return(final_predictions)
+}
+
+#  ---- 定义NP的RUSBoost&RUSPrediction函数 ----
+
+RUSBoost_np <- function(D, k) {
+  
+  weights <- rep(1 / nrow(D), nrow(D))
+  models <- list()
+  errors <- numeric(k)
+  
+  for (i in 1:k) {
+    
+    Di <- SBC(D)  # 确保SBC返回一个带有class列的平衡数据集
+    Di$class <- ifelse(Di$class == "Majority", 1, 0)
+    matrix_D<-as.matrix(Di)
+    Mi <- npc(x=matrix_D[,-9],y=matrix_D[,9],method="lda")
+    pred <- predict(Mi, D[,-9])$pred.label
+    error <- sum(weights * (pred != Train_np$class)) / sum(weights)
+    
+    
+    if (error >= 0.5) next
+    
+    correctly_classified <- pred == Train_np$class
+    weights[correctly_classified] <- weights[correctly_classified] * (1 - error) / error
+    weights <- weights / sum(weights)
+    
+    models[[i]] <- Mi
+    errors[i] <- error
+  }
+  return(list(models = models, errors = errors))
+}
+
+RUSBoost_predict_np <- function(model_list, new_instance) {#要用没删类别的
+  models <- model_list$models
+  errors <- model_list$errors
+  new_instance$class <- factor(new_instance$class)
+  n_samples <- nrow(new_instance)
+  n_classes <- length(unique(new_instance$class))
+  class_weights <- matrix(0, nrow = n_samples, ncol = n_classes)
+  colnames(class_weights) <- levels(new_instance$class)
+  
+  for (i in 1:length(models)) {
+    if (errors[i] < 0.5) {
+      pred <- predict(models[[i]], new_instance[,-9])$pred.label
+      if (is.null(pred)) {
+        stop(paste("Model", i, "failed to return valid predictions."))
+      }
+      pred_indices <- match(pred, levels(new_instance$class))
+      for (j in seq_along(pred_indices)) {
+        class_weights[j, pred_indices[j]] <- class_weights[j, pred_indices[j]] + log((1 - errors[i]) / errors[i])
+      }
+    }
+  }
+  final_predictions <- colnames(class_weights)[max.col(class_weights, ties.method = "first")]
+  return(final_predictions)
+}
+
+FNR_each_fold_nponly100<-c()
+FPR_each_fold_nponly100<-c()
+FNR_each_fold_np100<-c()
+FPR_each_fold_np100<-c()
+FNR_each_fold_normal100<-c()
+FPR_each_fold_normal100<-c()
+time_100<-c()
+
+pb <- tkProgressBar("进度","已完成 %", 0, 100) 
+
+for(u in 1:100){
+  start_time <- Sys.time()
+# ---- 预处理，分训练测试 ----
+Data<-read.csv(file="diabetes.csv",header=TRUE)
+missing1<-which(Data$smoking_history=="No Info")
+Data<-Data[-missing1,]
+missing2<-which(Data$gender=="Other")
+Data<-Data[-missing2,]
+Data <- Data[!(Data$age != floor(Data$age)), ]
+Data$smoking_history<-as.numeric(Data$smoking_history)
+Data$gender<-as.numeric(Data$gender)
+Data$age<-as.numeric(Data$age)
+Data$class<-as.factor(Data$class)
+
+sum(Data$class=="Minority")
+
+index<-floor(nrow(Data)*0.7)
+Train <- Data[1:index, ]
+Test <- Data[(index+1):nrow(Data),]
+Test1<-Test[-ncol(Test)]
+Test_np <- Test
+Test_np$class <- ifelse(Test_np$class == "Majority", 1, 0)
+Test_np$class <- as.numeric(Test_np$class)
+Test_npm<-as.matrix(Test_np)
+Test_np1<-Test_np[-ncol(Test_np)]
+Train_np<-Train
+Train_np$class <- ifelse(Train_np$class == "Majority", 1, 0)
+Train_np$class <- as.numeric(Train_np$class)
+
+
+
+
+#  ---- t折 ----
+
+t<-10
+
+FNR_each_fold_onlyun <- c() #只用下采样
+FNR_each_fold_np <- c() #np+下采样
+FNR_each_fold_nponly <- c()#只用np
+
+FPR_each_fold_onlyun <- c()
+FPR_each_fold_np <- c()
+FPR_each_fold_nponly <- c()
+
+for(q in 1:t){
+  
+  #只进行下采样的lda分类器
+  Model_RUSB <- RUSBoost(Train, 10) #这里把k占了
+  predictions_RUSB <- RUSBoost_predict(Model_RUSB, Test)#只能用Test
+  conf_matrix_RUSB <-confusionMatrix(as.factor(predictions_RUSB), as.factor(Test$class))
+  FNR_RUS <- (conf_matrix_RUSB$table[2, 1])/(conf_matrix_RUSB$table[2, 1]+conf_matrix_RUSB$table[1,1])
+  FNR_each_fold_onlyun[q] <- FNR_RUS
+  FNR_each_fold_normal100[u]<-mean(FNR_each_fold_onlyun)
+  
+  FPR_onlyun<- (conf_matrix_RUSB$table[1, 2])/(conf_matrix_RUSB$table[1, 2]+conf_matrix_RUSB$table[2,2])
+  FPR_each_fold_onlyun[q] <- FPR_onlyun
+  FPR_each_fold_normal100[u]<-mean(FPR_each_fold_onlyun)
+  
+  #进行下采样+np的lda分类器
+  np_model<-RUSBoost_np(Train,10)#这里把k占了
+  np_predictions <- RUSBoost_predict_np(np_model, Test_np)
+  #np_predictions <- ifelse(np_predictions == "1", "Majority", "Minority")
+  
+  conf_matrix_np <- confusionMatrix(as.factor(np_predictions), as.factor(Test_np$class))
+  
+  FNR_np <- (conf_matrix_np$table[2, 1])/(conf_matrix_np$table[2, 1]+conf_matrix_np$table[1,1])
+  FNR_each_fold_np[q] <- FNR_np
+  FNR_each_fold_np100[u]<-mean(FNR_each_fold_np)
+  
+  FPR_np<- (conf_matrix_np$table[1, 2])/(conf_matrix_np$table[1, 2]+conf_matrix_np$table[2,2])
+  FPR_each_fold_np[q] <- FPR_np
+  FPR_each_fold_np100[u]<-mean(FPR_each_fold_np)
+  
+  #只进行np的lda分类器
+  Train0<-Train
+  Train0$class <- ifelse(Train0$class == "Majority", 1, 0)
+  Train0$class <- as.numeric(Train0$class)
+  matrix_train<-as.matrix(Train0)
+  
+  model_onlynp <- npc(x=matrix_train[,-9],y=matrix_train[,9],method="lda")
+  predictions_onlynp<-predict(model_onlynp,Test1,type = "class")
+  
+  conf_matrix_onlynp <- confusionMatrix(as.factor(predictions_onlynp$pred.label), as.factor(Test_np$class))
+  FNR_onlynp <- (conf_matrix_onlynp$table[2, 1])/(conf_matrix_onlynp$table[2, 1]+conf_matrix_onlynp$table[1,1])
+  FNR_each_fold_nponly[q] <- FNR_onlynp
+  FNR_each_fold_nponly100[u]<-mean(FNR_each_fold_nponly)
+  
+  FPR_onlynp <- (conf_matrix_onlynp$table[1, 2])/(conf_matrix_onlynp$table[1, 2]+conf_matrix_onlynp$table[2,2])
+  FPR_each_fold_nponly[q] <- FPR_onlynp
+  FPR_each_fold_nponly100[u]<-mean(FPR_each_fold_nponly)
+}
+end_time <- Sys.time()
+time<-end_time-start_time
+time_100[u]<-time
+
+info <- sprintf("已完成 %d%%", round(u*100/100))  ## 设置进度条的完成度
+setTkProgressBar(pb, u*100/100, sprintf("进度 (%s)", info),info)  ## 设置进度条
+}
+
+close(pb)
+
+returnlist<-list(FPR_each_fold_nponly100,FNR_each_fold_nponly100,FPR_each_fold_np100,FNR_each_fold_np100,FPR_each_fold_normal100,FNR_each_fold_normal100)
+save(returnlist,file="RUSB.RData")
+
+
+
+#绘图
+OSS <- read.table("TIMEOSS.txt", sep = " ", header = FALSE,fill = TRUE)
+OSS_vector <- c(as.vector(t(OSS))*60)
+OSS_clean<-na.omit(OSS_vector)
+
+NCL <- read.table("TIMENCL.txt", sep = " ", header = FALSE,fill = TRUE)
+NCL_vector <- c(as.vector(t(NCL))*60)
+NCL_clean<-na.omit(NCL_vector)
+
+CUS <- read.table("TIMECUS.txt", sep = " ", header = FALSE,fill = TRUE)
+CUS_vector <- c(as.vector(t(CUS)))
+CUS_clean<-na.omit(CUS_vector)
+
+CUSB <- read.table("TIMECUSB.txt", sep = " ", header = FALSE,fill = TRUE)
+CUSB_vector <- c(as.vector(t(CUSB)))
+CUSB_clean<-na.omit(CUSB_vector)
+
+RUSB <- read.table("TIMERUSB.txt", sep = " ", header = FALSE,fill = TRUE)
+RUSB_vector <- c(as.vector(t(RUSB)))
+RUSB_clean<-na.omit(RUSB_vector)
+
+data<-list(OSS_clean,NCL_clean,CUS_clean,CUSB_clean,RUSB_clean)
+method_names <- c("OSS", "NCL", "CUS", "CUSB", "RUSB")
+average_times <- sapply(data, mean)
+sd_times <- sapply(data, sd)
+
+# 创建一个数据框，准备绘图
+data_to_plot <- data.frame(
+  Method = method_names,
+  AverageTime = average_times,
+  SD = sd_times
+)
+my_colors <- c("#9DCD82", "#F8B62D", "#F2997A","#85C0D9","#F4A9A8")
+# 绘制条形图
+windows()
+ggplot(data_to_plot, aes(x = Method, y = AverageTime, fill = Method)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.7) +
+  geom_errorbar(aes(ymin = AverageTime - SD, ymax = AverageTime + SD), 
+                width = 0.25, position = position_dodge(0.7)) +
+  scale_fill_manual(values = my_colors)+
+  xlab("Method") + 
+  ylab("Average Run Time") +
+  ggtitle("Comparison of Methods by Average Run Time") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for readability
+
+# 显示图表
+ggsave("Method_Comparison_Barplot.pdf", width = 8, height = 6)  # 保存图表
